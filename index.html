@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+<meta name="theme-color" content="#0a0418" />
+<title>Pixel Solar System</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=VT323&family=Press+Start+2P&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./styles.css" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <div id="loader" class="loader">
+    <div class="loader-inner">
+      <div class="loader-title">INITIALIZING&nbsp;STARFIELD</div>
+      <div class="loader-bar"><div class="loader-fill"></div></div>
+      <div class="loader-sub">computing ephemeris&hellip;</div>
+    </div>
+  </div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-icon" aria-hidden="true">◉</span>
+      <span class="brand-text">PIXEL&nbsp;SOLAR&nbsp;SYSTEM</span>
+    </div>
+    <div class="topbar-stats">
+      <span id="clock-date">----/--/--</span>
+      <span id="clock-time">--:--:--</span>
+    </div>
+  </header>
+
+  <aside class="sidebar" id="sidebar">
+    <button class="sidebar-tab" id="sidebarTab" aria-label="Toggle panel">
+      <span class="chev">›</span>
+    </button>
+    <div class="sidebar-content">
+      <section class="panel">
+        <h2>TIME</h2>
+        <div class="time-readout">
+          <div class="time-row"><span>DATE</span><b id="r-date">--</b></div>
+          <div class="time-row"><span>UTC</span><b id="r-time">--:--:--</b></div>
+          <div class="time-row"><span>J2000</span><b id="r-jd">--</b></div>
+        </div>
+        <div class="btn-row">
+          <button class="btn" data-speed="0">⏸</button>
+          <button class="btn active" data-speed="1">1×</button>
+          <button class="btn" data-speed="60">1m/s</button>
+          <button class="btn" data-speed="3600">1h/s</button>
+          <button class="btn" data-speed="86400">1d/s</button>
+          <button class="btn" data-speed="604800">1w/s</button>
+        </div>
+        <div class="slider-row">
+          <label>Scrub</label>
+          <input id="scrub" type="range" min="-30" max="30" step="0.01" value="0" />
+          <span id="scrubVal">0d</span>
+        </div>
+        <div class="btn-row tight">
+          <button class="btn small" id="btnNow">NOW</button>
+          <button class="btn small" id="btnJ2000">J2000</button>
+          <button class="btn small" id="btn2080">2080</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>FOCUS</h2>
+        <div class="focus-list" id="focusList">
+          <!-- buttons injected by JS -->
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>VIEW</h2>
+        <div class="btn-row tight">
+          <button class="btn small" id="btnOrbits">ORBITS</button>
+          <button class="btn small active" id="btnLabels">LABELS</button>
+          <button class="btn small active" id="btnMoons">MOONS</button>
+          <button class="btn small" id="btnRealistic">REAL SCALE</button>
+        </div>
+        <div class="btn-row tight">
+          <button class="btn small" id="btnPixelLow">PIXEL·LOW</button>
+          <button class="btn small active" id="btnPixelMid">PIXEL·MID</button>
+          <button class="btn small" id="btnPixelHigh">PIXEL·HIGH</button>
+        </div>
+      </section>
+
+      <section class="panel info" id="info">
+        <h2 id="infoName">—</h2>
+        <div id="infoBody" class="info-body">Tap a body to inspect.</div>
+      </section>
+    </div>
+  </aside>
+
+  <div class="hint" id="hint">
+    <span class="hint-icon">✦</span>
+    <span class="hint-text">DRAG to look · PINCH/SCROLL to zoom · TAP a body</span>
+  </div>
+
+  <div class="vignette" aria-hidden="true"></div>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
