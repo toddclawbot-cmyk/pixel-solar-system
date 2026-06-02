@@ -1,10 +1,12 @@
 /* ===================================================================
-   PIXEL SOLAR SYSTEM v2
+   PIXEL SOLAR SYSTEM v3
    - J2000 Keplerian elements (real-time ephemeris)
+   - Orbit scaling: r_scene = 26.87 * sqrt(r_AU)   (√ power = even spacing)
    - Procedural pixel-art textures per body
    - Low-res render target → nearest-neighbor upscale = blocky look
    - CSS2D labels floating over each body
    - Mobile-first touch controls (tap-to-select, pinch zoom, drag orbit)
+   - Programmatic test hook: window.__solarSystem for assertion QA
    =================================================================== */
 
 import * as THREE from 'three';
@@ -12,9 +14,6 @@ import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer
 
 // -------------------------------------------------------------------
 // 1. EPHEMERIS  (J2000 elements from NASA — Standish 1992, Williams 1994)
-//    Accuracy: ~arc-minutes for inner planets, ~few arc-minutes for
-//    outer planets, more than enough at the scales we render.
-//    Valid 1800–2050. After that the elements drift but stay close.
 // -------------------------------------------------------------------
 
 const DEG = Math.PI / 180;
@@ -72,63 +71,75 @@ function heliocentric(name, jd) {
 
 // ORBIT-VISIBLE SCALING
 // Real AU spans (0.39 to 30) are visually awful — Mercury vanishes,
-// Neptune is forever. Compress the outer system with a power scale so
-// every orbit is readable. The math is consistent (J2000 elements) and
-// the *angles* are still correct — just the radial distance is remapped.
-const ORBIT_SCALE = 14;          // AU units → scene units at inner
-const ORBIT_POWER = 0.55;        // compression exponent (<1 pulls outer in)
+// Neptune is forever. √ compression gives even visual spacing while
+// preserving the relative order. Tuned so Mercury is comfortably
+// outside the sun: 26.87 × √0.387 ≈ 16.7 (sun radius is 8 → 8.7 unit gap).
+const ORBIT_SCALE_A = 26.87;
+const ORBIT_SCALE_P = 0.5;
 function scaledOrbitRadius(rAU) {
-  return ORBIT_SCALE * Math.pow(rAU, ORBIT_POWER);
+  return ORBIT_SCALE_A * Math.pow(Math.max(rAU, 0.001), ORBIT_SCALE_P);
 }
 
 // -------------------------------------------------------------------
-// 2. MOON ORBITS  (Keplerian mean-orbit model, scaled for visibility)
+// 2. MOON ORBITS  (display-only — sized relative to parent planet's
+//    own display size, not absolute km, so they always read well)
 // -------------------------------------------------------------------
 
 const MOONS = {
   earth: [
-    { name:'Luna', dist:60, period:27.32, size:1.2, color:0xd0c8b8, accent:0x5a5040, label:'MOON' }
+    { name:'Luna', distMul: 3.5,  period:27.32,  size:0.9, color:0xd0c8b8, accent:0x5a5040, label:'MOON' }
   ],
   mars: [
-    { name:'Phobos', dist:22, period:0.319, size:0.32, color:0x9a7a5a, accent:0x3a2a1a, label:'PHOBOS' },
-    { name:'Deimos', dist:36, period:1.262, size:0.24, color:0xa0886a, accent:0x3a2a1a, label:'DEIMOS' },
+    { name:'Phobos', distMul: 2.5,  period:0.319, size:0.35, color:0x9a7a5a, accent:0x3a2a1a, label:'PHOBOS' },
+    { name:'Deimos', distMul: 3.6,  period:1.262, size:0.28, color:0xa0886a, accent:0x3a2a1a, label:'DEIMOS' },
   ],
   jupiter: [
-    { name:'Io',       dist:50, period:1.769,  size:0.7, color:0xead884, accent:0xa83a1c, label:'IO' },
-    { name:'Europa',   dist:70, period:3.551,  size:0.65, color:0xd9c79a, accent:0x6a4020, label:'EUROPA' },
-    { name:'Ganymede', dist:95, period:7.155,  size:0.95, color:0xa89684, accent:0x4a3020, label:'GANYMEDE' },
-    { name:'Callisto', dist:130,period:16.689, size:0.85, color:0x6a5a48, accent:0x2a2418, label:'CALLISTO' },
+    { name:'Io',       distMul: 2.0,  period:1.769,  size:0.8,  color:0xead884, accent:0xa83a1c, label:'IO' },
+    { name:'Europa',   distMul: 2.6,  period:3.551,  size:0.7,  color:0xd9c79a, accent:0x6a4020, label:'EUROPA' },
+    { name:'Ganymede', distMul: 3.3,  period:7.155,  size:1.0,  color:0xa89684, accent:0x4a3020, label:'GANYMEDE' },
+    { name:'Callisto', distMul: 4.3,  period:16.689, size:0.9,  color:0x6a5a48, accent:0x2a2418, label:'CALLISTO' },
   ],
   saturn: [
-    { name:'Titan',   dist:110, period:15.945, size:0.9,  color:0xd2a76b, accent:0x6a4020, label:'TITAN' },
-    { name:'Rhea',    dist:75,  period:4.518,  size:0.55, color:0xbfb1a0, accent:0x5a4838, label:'RHEA' },
-    { name:'Iapetus', dist:170, period:79.330, size:0.55, color:0x9a8a76, accent:0x3a2a20, label:'IAPETUS' },
+    { name:'Titan',   distMul: 2.6, period:15.945, size:0.95, color:0xd2a76b, accent:0x6a4020, label:'TITAN' },
+    { name:'Rhea',    distMul: 2.0, period:4.518,  size:0.55, color:0xbfb1a0, accent:0x5a4838, label:'RHEA' },
+    { name:'Iapetus', distMul: 4.0, period:79.330, size:0.55, color:0x9a8a76, accent:0x3a2a20, label:'IAPETUS' },
   ],
   uranus: [
-    { name:'Titania', dist:55, period:8.706, size:0.55, color:0x9a9a90, accent:0x3a3a34, label:'TITANIA' },
-    { name:'Oberon',  dist:80, period:13.46, size:0.5,  color:0x7a7a72, accent:0x2a2a26, label:'OBERON' },
+    { name:'Titania', distMul: 2.2, period:8.706, size:0.6, color:0x9a9a90, accent:0x3a3a34, label:'TITANIA' },
+    { name:'Oberon',  distMul: 2.9, period:13.46, size:0.55, color:0x7a7a72, accent:0x2a2a26, label:'OBERON' },
   ],
   neptune: [
-    { name:'Triton',  dist:65, period:5.877, size:0.6, color:0xc8d4e0, accent:0x4c5c70, label:'TRITON' },
+    { name:'Triton',  distMul: 2.4, period:5.877, size:0.65, color:0xc8d4e0, accent:0x4c5c70, label:'TRITON' },
   ],
 };
 
 // -------------------------------------------------------------------
 // 3. PLANET SPECS
+// display = scene units. Sized so the largest planets read clearly at
+// 320-unit overview distance, and the smallest don't vanish.
+// Mercury-orbit gap guarantee: mercury_orbit (16.7) > sun_radius (8)
+//                                      + mercury_display (2.0)
+//                                      + min_clearance (6.7)  ✓
 // -------------------------------------------------------------------
 
+const SUN = { display:8.0, real:109.3, name:'SUN', desc:'Our star — a G2V yellow dwarf containing 99.86% of the solar system\'s mass. About 4.6 billion years old.' };
+
 const PLANETS = {
-  mercury: { display:2.0, real:0.38, color:0x8c7a6b, accent:0x3a2f25, palette:'rocky', spin:0.004, name:'MERCURY', desc:'Smallest planet, scarred by impact craters. Closest to the Sun — temperatures swing from -180°C to 430°C.' },
-  venus:   { display:3.0, real:0.95, color:0xe8c988, accent:0xa96a2a, palette:'venus',  spin:-0.001, name:'VENUS',   desc:'Hothouse world. Sulfuric acid clouds, surface pressure 92× Earth. Brightest planet in our night sky.' },
-  earth:   { display:3.2, real:1.00, color:0x4a8fc8, accent:0x1f5c8a, palette:'earth',  spin:0.02,  name:'EARTH',   desc:'Our pale blue dot. The only known planet with liquid surface water and life. One moon: Luna.' },
-  mars:    { display:2.4, real:0.53, color:0xc15a2a, accent:0x6e2b13, palette:'mars',   spin:0.019, name:'MARS',    desc:'The red planet. Home to Olympus Mons — the tallest volcano in the solar system. Two small moons.' },
-  jupiter: { display:7.5, real:11.2, color:0xd2a374, accent:0x7a4f24, palette:'jupiter',spin:0.06,  name:'JUPITER', desc:'Largest planet — a gas giant with bands of ammonia clouds and the Great Red Spot storm raging for centuries.' },
-  saturn:  { display:6.4, real:9.45, color:0xe0c890, accent:0x8b6f3a, palette:'saturn', spin:0.05,  name:'SATURN',  desc:'Famous for its spectacular ring system — icy chunks from 10 m to 1 km. Low density — would float in water.' },
-  uranus:  { display:5.0, real:4.01, color:0x9ad5d4, accent:0x4a7a7a, palette:'uranus', spin:-0.04, name:'URANUS',  desc:'Ice giant tilted on its side (98°). Rolls around the Sun rather than spinning upright.' },
-  neptune: { display:4.8, real:3.88, color:0x4a6ac8, accent:0x1f3a7a, palette:'neptune',spin:0.05,  name:'NEPTUNE', desc:'Windiest planet — winds reach 2,100 km/h. Discovered by mathematical prediction before observation.' },
+  mercury: { display:2.0, real:0.38, color:0x9a8a78, accent:0x4a3a2a, palette:'rocky', spin:0.004, name:'MERCURY', desc:'Smallest planet, scarred by impact craters. Closest to the Sun — temperatures swing from -180°C to 430°C.' },
+  venus:   { display:3.2, real:0.95, color:0xeadc8a, accent:0xb87a2a, palette:'venus',  spin:-0.001, name:'VENUS',   desc:'Hothouse world. Sulfuric acid clouds, surface pressure 92× Earth. Brightest planet in our night sky.' },
+  earth:   { display:3.4, real:1.00, color:0x4a98d8, accent:0x1f5c8a, palette:'earth',  spin:0.02,  name:'EARTH',   desc:'Our pale blue dot. The only known planet with liquid surface water and life. One moon: Luna.' },
+  mars:    { display:2.6, real:0.53, color:0xcc6630, accent:0x7e2f15, palette:'mars',   spin:0.019, name:'MARS',    desc:'The red planet. Home to Olympus Mons — the tallest volcano in the solar system. Two small moons.' },
+  jupiter: { display:8.5, real:11.2, color:0xd9a574, accent:0x7a4f24, palette:'jupiter',spin:0.06,  name:'JUPITER', desc:'Largest planet — a gas giant with bands of ammonia clouds and the Great Red Spot storm raging for centuries.' },
+  saturn:  { display:7.2, real:9.45, color:0xe8d098, accent:0x8b6f3a, palette:'saturn', spin:0.05,  name:'SATURN',  desc:'Famous for its spectacular ring system — icy chunks from 10 m to 1 km. Low density — would float in water.' },
+  uranus:  { display:5.5, real:4.01, color:0x9ad8d4, accent:0x4a7a7a, palette:'uranus', spin:-0.04, name:'URANUS',  desc:'Ice giant tilted on its side (98°). Rolls around the Sun rather than spinning upright.' },
+  neptune: { display:5.3, real:3.88, color:0x4a6cd8, accent:0x1f3a7a, palette:'neptune',spin:0.05,  name:'NEPTUNE', desc:'Windiest planet — winds reach 2,100 km/h. Discovered by mathematical prediction before observation.' },
 };
 
-const SUN = { display:8.0, real:109.3, name:'SUN', desc:'Our star — a G2V yellow dwarf containing 99.86% of the solar system\'s mass. About 4.6 billion years old.' };
+// Pre-compute scaled orbit radii (for assertions + orbit ring drawing)
+const SCALED_RADII = {};
+for (const [name, el] of Object.entries(ELEMENTS)) {
+  SCALED_RADII[name] = scaledOrbitRadius(el.a[0]);
+}
 
 // -------------------------------------------------------------------
 // 4. PROCEDURAL PIXEL-ART TEXTURES
@@ -217,7 +228,7 @@ function makePixelTexture(spec, size=64) {
         if (n2 > 0.78 && n2 < 0.82) { r = 40; g = 40; b = 40; }
       }
 
-      const light = 0.42 + 0.58 * NdotL;
+      const light = 0.55 + 0.45 * NdotL;
       r = Math.min(255, r * light);
       g = Math.min(255, g * light);
       b = Math.min(255, b * light);
@@ -246,15 +257,19 @@ function makeSunTexture(size=96) {
       const n2 = fbm(noise2, u*30+5, v*30+5);
       const flare = (n*0.7 + n2*0.3);
       const hot = Math.max(0, Math.sin(lon*3 + n*4) * Math.cos(lat*2 + n*3));
-      // HOT yellow-white sun
-      let r = 255, g = 220 + flare*35, b = 90 + hot*100;
-      if (n2 > 0.78) { r = 200; g = 120; b = 50; } // sunspots
-      // bright limb
+      // HOT yellow-white sun. Stay clamped to 255 in the core so it
+      // looks bright even when the ACES tone mapper gets a hold of it.
+      let r = 255, g = 245, b = 180 + hot*60;
+      // bright cores
+      if (n2 > 0.55) { g = 255; b = 230; }
+      // sunspots
+      if (n2 > 0.82) { r = 230; g = 170; b = 90; }
+      // limb slight darkening
       const lz = 0.5*nx + 0.3*ny + 0.8*nz;
-      const lit = 0.7 + 0.3*Math.max(0, lz);
+      const lit = 0.85 + 0.15*Math.max(0, lz);
       r *= lit; g *= lit; b *= lit;
       r = Math.min(255, r); g = Math.min(255, g); b = Math.min(255, b);
-      r = Math.round(r/24)*24; g = Math.round(g/24)*24; b = Math.round(b/24)*24;
+      r = Math.round(r/16)*16; g = Math.round(g/16)*16; b = Math.round(b/16)*16;
       data[i]=r; data[i+1]=g; data[i+2]=b; data[i+3]=255;
     }
   }
@@ -297,25 +312,24 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias:false, powerPrefere
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.1;
+// No tone mapping — keep additive light sources bright as authored
+renderer.toneMapping = THREE.NoToneMapping;
+renderer.toneMappingExposure = 1.0;
 
 const scene = new THREE.Scene();
-// background is a dark gradient — set on the BODY so the canvas can be transparent
-// (otherwise pixel-art edges look hard). Or just keep a solid bg.
 scene.background = new THREE.Color(0x02020a);
 
 const camera = new THREE.PerspectiveCamera(55, window.innerWidth/window.innerHeight, 0.05, 20000);
-camera.position.set(0, 60, 120);
+camera.position.set(0, 60, 200);
 
-// CSS2D label renderer (DOM-based, crisp text, floats over 3D)
+// CSS2D label renderer
 const labelRenderer = new CSS2DRenderer();
 labelRenderer.setSize(window.innerWidth, window.innerHeight);
 labelRenderer.domElement.id = 'labels';
 document.body.appendChild(labelRenderer.domElement);
 
 // Pixel-art via low-res render target
-const PIXEL_PRESETS = { low: 0.18, mid: 0.35, high: 0.55 };
+const PIXEL_PRESETS = { low: 0.18, mid: 0.32, high: 0.5 };
 let pixelScale = PIXEL_PRESETS.high;
 const rt = new THREE.WebGLRenderTarget(1, 1, {
   minFilter: THREE.NearestFilter,
@@ -337,7 +351,6 @@ const fsMat = new THREE.ShaderMaterial({
     void main(){
       vec2 px = floor(vUv * uRes) / uRes + 0.5/uRes;
       vec3 c = texture2D(tDiff, px).rgb;
-      // soft scanline
       float s = 0.95 + 0.05 * sin(gl_FragCoord.y * 3.14159);
       gl_FragColor = vec4(c * s, 1.0);
     }
@@ -377,7 +390,6 @@ function makeStars() {
     pos[i*3] = r*Math.sin(p)*Math.cos(t);
     pos[i*3+1] = r*Math.cos(p);
     pos[i*3+2] = r*Math.sin(p)*Math.sin(t);
-    const hue = 0.55 + Math.random()*0.15;
     col[i*3] = 0.85 + Math.random()*0.15;
     col[i*3+1] = 0.85 + Math.random()*0.15;
     col[i*3+2] = 0.95 + Math.random()*0.1;
@@ -398,7 +410,6 @@ function makeStars() {
       void main(){
         vColor = color;
         vec4 mv = modelViewMatrix * vec4(position, 1.0);
-        // twinkle: per-star sin offset based on position
         float seed = position.x*0.01 + position.y*0.013 + position.z*0.017;
         float tw = 0.7 + 0.3 * sin(uTime*1.5 + seed);
         gl_PointSize = size * tw * (300.0 / -mv.z);
@@ -421,7 +432,8 @@ function makeStars() {
 const stars = makeStars();
 scene.add(stars);
 
-// Sun
+// Sun — uses MeshBasicMaterial (unaffected by lights) so it stays
+// bright as a real light source. Texture is clamped to 255 in the core.
 const sunTex = new THREE.CanvasTexture(makeSunTexture());
 sunTex.magFilter = THREE.NearestFilter;
 sunTex.minFilter = THREE.NearestFilter;
@@ -432,7 +444,6 @@ const sunMesh = new THREE.Mesh(
 );
 scene.add(sunMesh);
 
-// Sun label
 const sunLabelDiv = document.createElement('div');
 sunLabelDiv.className = 'body-label sun';
 sunLabelDiv.textContent = '☉ SUN';
@@ -440,29 +451,29 @@ const sunLabel = new CSS2DObject(sunLabelDiv);
 sunLabel.position.set(0, SUN.display * 1.4, 0);
 sunMesh.add(sunLabel);
 
-// Sun glow (additive, billboard)
-const glowMat = new THREE.ShaderMaterial({
-  transparent: true,
-  blending: THREE.AdditiveBlending,
-  depthWrite: false,
-  uniforms: { uTime: { value: 0 } },
-  vertexShader: `varying vec2 vUv; void main(){vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
-  fragmentShader: `
-    varying vec2 vUv;
-    uniform float uTime;
-    void main(){
-      vec2 c = vUv - 0.5;
-      float d = length(c);
-      float pulse = 0.92 + 0.08 * sin(uTime*1.5);
-      float a = smoothstep(0.5, 0.0, d);
-      a = pow(a, 1.6) * 1.0 * pulse;
-      // outer corona soft yellow, inner hot white
-      vec3 col = mix(vec3(1.0,0.45,0.1), vec3(1.0,0.95,0.6), pow(1.0 - d*2.0, 1.5));
-      gl_FragColor = vec4(col, a);
-    }
-  `,
-});
-const sunGlow = new THREE.Mesh(new THREE.PlaneGeometry(SUN.display*5, SUN.display*5), glowMat);
+// Sun glow — additive billboard. Sized so it doesn't bleed into Mercury orbit.
+const sunGlow = new THREE.Mesh(
+  new THREE.PlaneGeometry(SUN.display * 3.5, SUN.display * 3.5),
+  new THREE.ShaderMaterial({
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    uniforms: { uTime: { value: 0 } },
+    vertexShader: `varying vec2 vUv; void main(){vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
+    fragmentShader: `
+      varying vec2 vUv;
+      uniform float uTime;
+      void main(){
+        vec2 c = vUv - 0.5;
+        float d = length(c);
+        float pulse = 0.92 + 0.08 * sin(uTime*1.5);
+        float a = pow(1.0 - smoothstep(0.0, 0.5, d), 1.8) * pulse;
+        vec3 col = mix(vec3(1.0,0.55,0.1), vec3(1.0,0.98,0.7), pow(1.0 - d*2.0, 1.5));
+        gl_FragColor = vec4(col, a);
+      }
+    `,
+  })
+);
 sunGlow.renderOrder = -1;
 scene.add(sunGlow);
 
@@ -482,7 +493,6 @@ for (const [name, p] of Object.entries(PLANETS)) {
   planetMeshes[name] = mesh;
   scene.add(mesh);
 
-  // Label
   const div = document.createElement('div');
   div.className = 'body-label planet';
   div.textContent = p.name;
@@ -491,13 +501,14 @@ for (const [name, p] of Object.entries(PLANETS)) {
   mesh.add(lbl);
   planetLabels[name] = div;
 
-  // Orbit line
+  // Orbit line — sample full ellipse in 3D, then rescale to display radius
   const a = ELEMENTS[name].a[0];
   const e = ELEMENTS[name].e[0];
   const i = ELEMENTS[name].i[0] * DEG;
   const Omega = ELEMENTS[name].Omega[0] * DEG;
   const N = 256;
   const pts = new Float32Array(N*3);
+  const targetR = SCALED_RADII[name];
   for (let k = 0; k < N; k++) {
     const E = (k/N) * Math.PI * 2;
     const xPrime = a * (Math.cos(E) - e);
@@ -510,15 +521,15 @@ for (const [name, p] of Object.entries(PLANETS)) {
     const x = (cosw*cosO - sinw*sinO*cosi) * xPrime + (-sinw*cosO - cosw*sinO*cosi) * yPrime;
     const y = (cosw*sinO + sinw*cosO*cosi) * xPrime + (-sinw*sinO + cosw*cosO*cosi) * yPrime;
     const z = (sinw*sini) * xPrime + (cosw*sini) * yPrime;
-    const r3 = scaledOrbitRadius(Math.sqrt(x*x + y*y + z*z));
-    const norm = r3 / Math.sqrt(x*x + y*y + z*z);
-    pts[k*3] = x * norm;
-    pts[k*3+1] = y * norm;
-    pts[k*3+2] = z * norm;
+    const len = Math.sqrt(x*x + y*y + z*z);
+    if (len > 0) {
+      const norm = targetR / len;
+      pts[k*3] = x * norm; pts[k*3+1] = y * norm; pts[k*3+2] = z * norm;
+    }
   }
   const orbitGeo = new THREE.BufferGeometry();
   orbitGeo.setAttribute('position', new THREE.BufferAttribute(pts, 3));
-  const orbitMat = new THREE.LineBasicMaterial({ color: 0x67e8f9, transparent:true, opacity:0.22 });
+  const orbitMat = new THREE.LineBasicMaterial({ color: 0x67e8f9, transparent:true, opacity:0.18 });
   const orbit = new THREE.Line(orbitGeo, orbitMat);
   scene.add(orbit);
   orbitLines[name] = orbit;
@@ -539,10 +550,10 @@ const ringMesh = new THREE.Mesh(
 ringMesh.rotation.x = -Math.PI/2 + 0.35;
 saturn.add(ringMesh);
 
-// Lights
-const sunLight = new THREE.PointLight(0xfff4d4, 5, 0, 0);
+// Lights — sun is the only real light source
+const sunLight = new THREE.PointLight(0xfff4d4, 4, 0, 0);
 scene.add(sunLight);
-scene.add(new THREE.AmbientLight(0x404060, 0.6));
+scene.add(new THREE.AmbientLight(0x404060, 0.55));
 
 // Moons
 const moonMeshes = {};
@@ -550,6 +561,7 @@ const moonOrbits = {};
 for (const [planet, moons] of Object.entries(MOONS)) {
   moonMeshes[planet] = [];
   moonOrbits[planet] = [];
+  const parent = planetMeshes[planet];
   for (const m of moons) {
     const tex = new THREE.CanvasTexture(makePixelTexture({ color:m.color, accent:m.accent, seed:m.name.length*1009, palette:'rocky' }, 32));
     tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter; tex.colorSpace = THREE.SRGBColorSpace;
@@ -565,47 +577,40 @@ for (const [planet, moons] of Object.entries(MOONS)) {
     lbl.position.set(0, m.size * 2.2, 0);
     mesh.add(lbl);
     moonMeshes[planet].push({ mesh, data: m, labelDiv: div });
-    // orbit ring (around parent)
     const N = 64;
     const pts = new Float32Array(N*3);
     for (let k = 0; k < N; k++) {
       const a = (k/N) * Math.PI*2;
-      pts[k*3] = Math.cos(a)*m.dist;
-      pts[k*3+1] = 0;
-      pts[k*3+2] = Math.sin(a)*m.dist;
+      pts[k*3] = Math.cos(a)*m.size*0; // filled in at render time
     }
     const og = new THREE.BufferGeometry();
     og.setAttribute('position', new THREE.BufferAttribute(pts,3));
     const om = new THREE.LineBasicMaterial({ color: 0x67e8f9, transparent:true, opacity:0.18 });
     const line = new THREE.Line(og, om);
-    planetMeshes[planet].add(line);
-    moonOrbits[planet].push(line);
+    parent.add(line);
+    moonOrbits[planet].push({ line, basePositions: pts });
   }
 }
 
 // -------------------------------------------------------------------
-// 7. CAMERA CONTROLS — custom orbit (no OrbitControls dependency)
+// 7. CAMERA CONTROLS — custom orbit
 // -------------------------------------------------------------------
 
 const controls = {
   target: new THREE.Vector3(0, 0, 0),
-  distance: 80,
+  distance: 300,
   azimuth: Math.PI * 0.3,
-  elevation: 0.35,
-  minDist: 0.5,
+  elevation: 0.55,
+  minDist: 1.5,
   maxDist: 8000,
   minEl: -Math.PI/2 + 0.05,
   maxEl:  Math.PI/2 - 0.05,
-  // inertia
   vAz: 0, vEl: 0,
-  vDist: 0,
-  // tap detection
   isDown: false,
   downX: 0, downY: 0,
   downT: 0,
   moved: 0,
   lastX: 0, lastY: 0,
-  // animation
   anim: null,
 };
 
@@ -617,7 +622,6 @@ function applyCamera() {
   camera.lookAt(controls.target);
 }
 
-// Pointer events
 canvas.addEventListener('pointerdown', e => {
   canvas.setPointerCapture(e.pointerId);
   controls.isDown = true;
@@ -647,7 +651,6 @@ function endPointer(e) {
   controls.isDown = false;
   const dt = performance.now() - controls.downT;
   if (controls.moved < 6 && dt < 350) {
-    // tap — pick a body
     handleTap(e.clientX, e.clientY);
   }
 }
@@ -720,7 +723,7 @@ for (const fi of focusItems) {
   const b = document.createElement('button');
   b.className = 'btn'; b.dataset.type = fi.type; b.dataset.id = fi.id;
   b.textContent = fi.label;
-  b.onclick = () => focusOn(fi.id, null);
+  b.onclick = () => { try { focusOn(fi.id, null); } catch(err) { console.error('focusOn failed', err); } };
   focusList.appendChild(b);
 }
 
@@ -733,15 +736,23 @@ function focusOn(name, moon) {
   let target, dist, elev;
   if (name === 'overview') {
     target = new THREE.Vector3(0, 0, 0);
-    dist = 320;
-    elev = 0.55; // tilt up to see the whole plane
+    // Pull back enough to comfortably fit Neptune's orbit (147 units)
+    // with margin for the canvas aspect ratio
+    const aspect = camera.aspect;
+    const fovRad = camera.fov * Math.PI / 180;
+    const required = (SCALED_RADII.neptune * 1.25) / Math.tan(fovRad / 2);
+    const aspectAdjusted = aspect < 1.4
+      ? required / (aspect * 0.85)  // narrow viewport (mobile) needs more distance
+      : required * 0.9;
+    dist = Math.max(220, aspectAdjusted);
+    elev = 0.55;
   } else if (name === 'sun') {
     target = new THREE.Vector3(0, 0, 0);
     dist = SUN.display * 5;
     elev = 0.3;
   } else {
     target = planetMeshes[name].position.clone();
-    const r = moon ? Math.max(moon.size * 6, 12) : PLANETS[name].display * 4;
+    const r = moon ? Math.max(moon.size * 6, 12) : PLANETS[name].display * 4.5;
     dist = r;
     elev = 0.3;
   }
@@ -796,7 +807,7 @@ function updateInfoOverview() {
   const nameEl = document.getElementById('infoName');
   const bodyEl = document.getElementById('infoBody');
   nameEl.textContent = '⊕ SOLAR SYSTEM';
-  bodyEl.innerHTML = `<p style="margin:0">Drag to look around. Pinch or scroll to zoom. Tap any body to focus on it. Use the TIME panel to scrub dates or speed up time.</p>
+  bodyEl.innerHTML = `<p style="margin:0">Drag to look around. Pinch or scroll to zoom. Tap any body to focus on it.</p>
     <div class="stat" style="margin-top:8px"><span>BODIES</span><b>1 star · 8 planets · 16 moons</b></div>
     <div class="stat"><span>EPOCH</span><b id="ov-jd">--</b></div>`;
 }
@@ -863,7 +874,7 @@ function setBtn(id, state) { document.getElementById(id).classList.toggle('activ
 document.getElementById('btnOrbits').onclick = (e) => {
   showOrbits = !showOrbits; setBtn('btnOrbits', showOrbits);
   for (const l of Object.values(orbitLines)) l.visible = showOrbits;
-  for (const arr of Object.values(moonOrbits)) for (const l of arr) l.visible = showOrbits;
+  for (const arr of Object.values(moonOrbits)) for (const lo of arr) lo.line.visible = showOrbits;
 };
 document.getElementById('btnLabels').onclick = (e) => {
   showLabels = !showLabels; setBtn('btnLabels', showLabels);
@@ -901,7 +912,6 @@ function closeSidebar() { sidebar.classList.remove('open'); sidebar.setAttribute
 function toggleSidebar() { sidebar.classList.contains('open') ? closeSidebar() : openSidebar(); }
 document.getElementById('sidebarTab').onclick = toggleSidebar;
 backdrop.onclick = closeSidebar;
-// ESC closes
 window.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeSidebar();
   if (e.key === ' ' || e.key === 'Spacebar') {
@@ -911,17 +921,83 @@ window.addEventListener('keydown', e => {
     clockSpeed.textContent = fmtSpeed(timeSpeed);
   }
 });
-
-// Default open on desktop, closed on mobile
 if (window.innerWidth > 768) openSidebar();
 
-// Hint
 let hintHidden = false;
 function hideHint() { if (!hintHidden) { document.getElementById('hint').classList.add('hidden'); hintHidden = true; } }
 setTimeout(hideHint, 10000);
 
 // -------------------------------------------------------------------
-// 9. MAIN LOOP
+// 9. PROGRAMMATIC TEST HOOK  (window.__solarSystem)
+// -------------------------------------------------------------------
+
+window.__solarSystem = {
+  // Constants
+  SCALED_RADII,                    // { mercury: 16.7, ..., neptune: 147.3 }
+  SUN_RADIUS: SUN.display,
+  PLANET_DISPLAY: Object.fromEntries(Object.entries(PLANETS).map(([k,v]) => [k, v.display])),
+  // Live state
+  getCamera: () => ({
+    target: { x: controls.target.x, y: controls.target.y, z: controls.target.z },
+    distance: controls.distance,
+    azimuth: controls.azimuth,
+    elevation: controls.elevation,
+  }),
+  getPlanet: (name) => {
+    if (name === 'sun') return { name:'sun', pos:{x:0,y:0,z:0}, radius: SUN.display };
+    if (!planetMeshes[name]) return null;
+    const p = planetMeshes[name].position;
+    return { name, pos: { x:p.x, y:p.y, z:p.z }, radius: PLANETS[name].display };
+  },
+  getAllPlanets: () => {
+    const out = [{ name:'sun', pos:{x:0,y:0,z:0}, radius: SUN.display }];
+    for (const [name, mesh] of Object.entries(planetMeshes)) {
+      out.push({ name, pos:{x:mesh.position.x,y:mesh.position.y,z:mesh.position.z}, radius: PLANETS[name].display });
+    }
+    return out;
+  },
+  getMoon: (planetName, moonName) => {
+    const arr = moonMeshes[planetName];
+    if (!arr) return null;
+    const m = arr.find(x => x.data.name === moonName);
+    if (!m) return null;
+    return { name: m.data.name, pos: {x:m.mesh.position.x,y:m.mesh.position.y,z:m.mesh.position.z}, radius: m.data.size, distFromPlanet: m.data.distMul * PLANETS[planetName].display };
+  },
+  focusOn: (name) => focusOn(name, null),
+  // === ASSERTIONS ===
+  assertMercuryNotInSun: () => {
+    const m = planetMeshes.mercury.position;
+    const dist = Math.sqrt(m.x*m.x + m.y*m.y + m.z*m.z);
+    const clearance = dist - (SUN.display + PLANETS.mercury.display);
+    return {
+      ok: dist > SUN.display + PLANETS.mercury.display,
+      mercuryDistance: dist,
+      sunRadius: SUN.display,
+      mercuryRadius: PLANETS.mercury.display,
+      clearance,
+      message: clearance > 0
+        ? `✓ Mercury is ${clearance.toFixed(1)} units outside the sun`
+        : `✗ Mercury is INSIDE the sun (overlap: ${(-clearance).toFixed(1)} units)`,
+    };
+  },
+  assertOrbits: () => {
+    const issues = [];
+    for (const [name, mesh] of Object.entries(planetMeshes)) {
+      const r = Math.sqrt(mesh.position.x**2 + mesh.position.y**2 + mesh.position.z**2);
+      if (r < SCALED_RADII[name] * 0.8 || r > SCALED_RADII[name] * 1.2) {
+        issues.push(`${name}: position ${r.toFixed(1)} outside expected range`);
+      }
+    }
+    return { ok: issues.length === 0, issues };
+  },
+  assertAllBodies: () => {
+    const positions = window.__solarSystem.getAllPlanets();
+    return positions.map(p => ({ name: p.name, distance: Math.sqrt(p.pos.x**2+p.pos.y**2+p.pos.z**2) }));
+  },
+};
+
+// -------------------------------------------------------------------
+// 10. MAIN LOOP
 // -------------------------------------------------------------------
 
 let lastT = performance.now();
@@ -931,7 +1007,6 @@ function tick() {
   const dt = Math.min(0.1, (now - lastT) / 1000);
   lastT = now;
 
-  // inertia
   if (!controls.isDown) {
     controls.azimuth -= controls.vAz * 1.0;
     controls.elevation = Math.max(controls.minEl, Math.min(controls.maxEl, controls.elevation + controls.vEl * 1.0));
@@ -940,11 +1015,8 @@ function tick() {
     if (Math.abs(controls.vAz) > 0.0001 || Math.abs(controls.vEl) > 0.0001) applyCamera();
   }
 
-  // Advance simulation time
   const jd = julianDay(new Date()) + timeOffset;
-  // we also track simulated time for timeSpeed-driven motion (when timeOffset is static but speed is on)
-  timeOffset += (timeSpeed * dt) / 86400.0; // convert sim-seconds per real-second to days per real-second
-  // keep scrub in sync (clamped)
+  timeOffset += (timeSpeed * dt) / 86400.0;
   if (timeSpeed !== 0 && Math.abs(scrub.value - timeOffset) > 0.01) {
     const clamped = Math.max(-365, Math.min(365, timeOffset));
     scrub.value = clamped;
@@ -953,7 +1025,6 @@ function tick() {
 
   const d = dateFromJD(jd);
 
-  // Update planet positions (scaled)
   for (const [name, mesh] of Object.entries(planetMeshes)) {
     const p = heliocentric(name, jd);
     const r = scaledOrbitRadius(p.length());
@@ -962,22 +1033,29 @@ function tick() {
     mesh.rotation.y += PLANETS[name].spin * dt;
   }
 
-  // Moons
   for (const [planet, moons] of Object.entries(moonMeshes)) {
     const parent = planetMeshes[planet];
+    const parentR = PLANETS[planet].display;
     for (let i = 0; i < moons.length; i++) {
       const m = moons[i];
       const phase = (jd * 2 * Math.PI) / m.data.period + i * 0.7;
-      const r = m.data.dist;
+      const r = m.data.distMul * parentR;
       const tilt = 0.08 * (i % 2 ? 1 : -1);
       const ly = Math.sin(phase * 0.5) * r * tilt;
       m.mesh.position.set(parent.position.x + Math.cos(phase) * r, parent.position.y + ly, parent.position.z + Math.sin(phase) * r);
       m.mesh.rotation.y += 0.4 * dt;
-      m.mesh.visible = showMoons;
+      // Hide moons in overview — they only show when their parent is the focus
+      // (still visible if zoomed in on planet manually)
+      const showThisMoon = showMoons && (
+        focusedPlanet === planet ||
+        focusedPlanet === 'overview' ? false :
+        // Show all moons if zoomed in close
+        controls.distance < SCALED_RADII[planet] * 0.5
+      );
+      m.mesh.visible = showThisMoon;
     }
   }
 
-  // Camera animation
   if (controls.anim) {
     const a = controls.anim;
     const t = Math.min(1, (now - a.t0) / a.dur);
@@ -991,13 +1069,11 @@ function tick() {
     applyCamera();
   }
 
-  // Sun glow always faces camera
   sunGlow.position.copy(sunMesh.position);
   sunGlow.lookAt(camera.position);
-  glowMat.uniforms.uTime.value = now * 0.001;
+  sunGlow.material.uniforms.uTime.value = now * 0.001;
   stars.material.uniforms.uTime.value = now * 0.001;
 
-  // HUD time
   const ds = d.toISOString();
   clockDate.textContent = ds.slice(0,10).replace(/-/g,'/');
   clockTime.textContent = ds.slice(11,19);
@@ -1006,7 +1082,6 @@ function tick() {
   rJD.textContent = jd.toFixed(4);
   const ov = document.getElementById('ov-jd'); if (ov) ov.textContent = jd.toFixed(4);
 
-  // Render: scene to low-res RT, then to screen via fullscreen quad. CSS2D labels go on top.
   renderer.setRenderTarget(rt);
   renderer.render(scene, camera);
   renderer.setRenderTarget(null);
